@@ -15,8 +15,8 @@ int strtoint(char* str){
 void printArray(int* lifeArray, int row, int col, int gen){//TODO should we pass gen just for this?
 	char* outStr = (char *)malloc(sizeof(char)*(row)*(col+1));
 	int index = 0;
-	for(int i = 0; i < col; i++){
-		for(int j = 0; j < row; j++){
+	for(int i = 1; i < col-1; i++){
+		for(int j = 1; j < row-1; j++){
 			if(!lifeArray[(row*i)+j])//index should never be called on lifeArray bacuse of the \n
 				outStr[index++] = '-';
 			else
