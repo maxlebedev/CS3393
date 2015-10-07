@@ -35,10 +35,10 @@ int main (int argc, char* argv[]){
 	while(!done){
 		char buff[MAX_LEN];
 		getLine(prompt, buff, MAX_LEN);
-		//int pipes = countPipes(buff);
-		//char* argvv[pipes+1][MAX_TOK];
+		int pipes = countPipes(buff);
+		char* argvv[pipes+1][MAX_TOK];
 
-		parse(buff);
+		parse2(buff, argvv);
 		/*execute();
 		 if(argvv != NULL)
 		 	free(argvv);
@@ -121,6 +121,12 @@ void parse(char* buff){
 	}
 }
 
+void printArray(char* argv[]){
+	for(int i = 0; argv[i] != '\0';i++){
+		printf("Array[%d]: %s\n", i, argv[i]);
+	}
+}
+
 //Parse the input buffer into an argv array. Each entry in the array is a cmd
 void parse2(char* buff, char * argvv[][MAX_TOK]){
 	int argvCount = 0;
@@ -130,19 +136,30 @@ void parse2(char* buff, char * argvv[][MAX_TOK]){
 		perror("strtok failed");
 		exit(1);
 	}
-	int tokCount = 0;
 	argvv[0][0] = token;
-	//check for builtins
+	int tokCount = 1;
 
 	//populate the argv array with tokens taken from input
+	puts("test");
 	while(NULL != token){
 		token = strtok(NULL, delim);
-		if(!strcmp(token, "|")) {
+		puts("test");
+		puts(token);
+		if(token != NULL && !strcmp(token, "|")) {//if we see a pipe, assume a new command and reset arg counter
+			argvv[argvCount][tokCount] = NULL;
 			argvCount++;
+			tokCount = 0;
 		}
-		argvv[argvCount][++tokCount] = token;
+		else{
+			printf("setting [%d][%d] %s\n", argvCount, tokCount, token);
+			argvv[argvCount][tokCount++] = token;
+		}
 	}
-	for(int i = 0; i < argvCount; i++){
+	printf("[%d]\n", argvCount);
+	for(int i = 0; i <= argvCount; i++){
+		printArray(argvv[i]);
+		//check for builtins
+		
 		if(!builtin(argvv[i])){
 			execute(argvv[i]);
 		}
