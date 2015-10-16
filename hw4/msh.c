@@ -1,7 +1,7 @@
 /*	msh - Max's Shell
  *	Created by: Max Lebedev
  *	This is a simple shell designed to read input,
- *	tokenize it, and exec it.
+ *	tokenize it, and exec it. It now also handles pipes
  *
  */
 
@@ -14,73 +14,38 @@
 #define MAX_LEN 100
 #define MAX_TOK 10
 
-//TODO: make it work with 1 pipe first
-//TODO: we probably don't handle trailing pipes very well?
 
 static int getLine (char *prmpt, char *buff, size_t size);
 void execute(char* argv[]);
-int shellLoop();
+int builtin(char* argv[]);
 int parse(char* buff, char * argvv[][MAX_TOK]);
 int countPipes(char* buff);
-int builtin(char* argv[]);
+void dup2Wrap(int newfd, int oldfd);
+void pipeExecute(int in, int out, char* argv[MAX_TOK]);
+void loopExecWrapper(char* argvv[][MAX_TOK], int index);
+void loopExec(int n, char* argvv[][MAX_TOK]);
 
-void chain2(char* argvv[][MAX_TOK]){
-	int fd[2];
-	if (pipe(fd) < 0 ){
-		perror("pipe creation failed");
-	}
-	int pid = fork();
-	if(pid == -1){
-		perror("forking  failed");
-	}
-	if(pid == 0){
-		close(1);
-		dup(fd[1]);
-		execvp(argvv[0][0], argvv[0]);//pipe gets closed here
-		perror("exec failed");
-	}
-	else{ //close write end of pipe?
-		wait(NULL);
-		pid = fork();
-		if(pid == 0){
-			close(0);
-			dup(fd[0]);
-			close(fd[1]);//important to close the writing pipe
-			execvp(argvv[1][0], argvv[1]);
-			perror("exec failed");
-		}
-		else{
-			close(fd[1]);
-			close(fd[0]);
-			wait(NULL);
-		}
-	}
-}
 
-int main (int argc, char* argv[]){
+int main(int argc, char* argv[]){
 	int done = 0;
 	char* prompt = getenv("PS1");
 	if(!prompt){
 		prompt = "|>";
 	}
 	//read a line, parse it and execute it
-	//char* argvv [][];
 	while(!done){
 		char buff[MAX_LEN];
 		getLine(prompt, buff, MAX_LEN);
 		int pipes = countPipes(buff);
 		char* argvv[pipes+1][MAX_TOK];
 
-		int argvCount = parse(buff, argvv);//less of a count, more of a index of last
-		printf("argvCount: %d\n", argvCount);
-		if(argvCount == 1){
-			chain2(argvv);
+		int pipeCount = parse(buff, argvv);//less of a count, more of a index of last
+		if(pipeCount > 0){
+			loopExecWrapper(argvv,pipeCount+1);
 		}
 		else{
-			for(int i = 0; i <= argvCount; i++){
-				///printArray(argvv[i]);
-				//check for builtins
-				if(!builtin(argvv[i])){
+			for(int i = 0; i <= pipeCount; i++){
+				if(!builtin(argvv[i])){ //check for builtins
 					execute(argvv[i]);
 				}
 			}
@@ -142,13 +107,6 @@ int builtin(char* argv[]){
 	return 0;
 }
 
-//TODO delete this and all DB prints
-void printArray(char* argv[]){
-	for(int i = 0; argv[i] != '\0';i++){
-		printf("Array[%d]: %s\n", i, argv[i]);
-	}
-}
-
 //Parse the input buffer into an argv array. Each entry in the array is a cmd
 int parse(char* buff, char * argvv[][MAX_TOK]){
 	int argvCount = 0;
@@ -164,7 +122,8 @@ int parse(char* buff, char * argvv[][MAX_TOK]){
 	//populate the argv array with tokens taken from input
 	while(NULL != token){
 		token = strtok(NULL, delim);
-		if(token != NULL && !strcmp(token, "|")) {//if we see a pipe, assume a new command and reset arg counter
+		//if we see a pipe, assume a new command and reset arg counter
+		if(token != NULL && !strcmp(token, "|")) {
 			argvv[argvCount][tokCount] = NULL;
 			argvCount++;
 			tokCount = 0;
@@ -175,6 +134,8 @@ int parse(char* buff, char * argvv[][MAX_TOK]){
 	}
 	return argvCount;
 }
+
+//return the number of pipes. 
 int countPipes(char* buff){
 	int pipes = 0;
 	for(int i = 0; buff[i] != '\0';i++){
@@ -185,24 +146,62 @@ int countPipes(char* buff){
 	return pipes;
 }
 
-
-/*
-//TODO maybe the lowest descendant deals with index = 0
-void daisyChainExecs(char* argvv[][MAX_TOK], int index){
-	if(argvv[index+1] != NULL)//if there is more to be done
-		pipe();
-	int pid = fork();
-	if(pid == -1){
-		//error
+//call dup2 and check for errors
+void dup2Wrap(int newfd, int oldfd){
+	if(dup2(newfd, oldfd)<0){
+		perror("dup2 failed");
 	}
+}
+
+//execute, but takes an in and out rather than using stdin/stdout
+void pipeExecute(int in, int out, char* argv[MAX_TOK]){
+	int pid = fork();
 	if(pid == 0){
-		daisyChainExecs(argvv, index+1){
-			//problem is we want to exec after daisychaining
-			//if they block nicely on iO we can maybe just exec here
+		if(in != 0){
+			dup2Wrap(in, 0);
+			close(in);
+		}
+		if(out != 1){
+			dup2Wrap(out, 1);
+			close(out);
+		}
+		execvp(argv[0], argv);
+		perror("exec failed");
 	}
 	else{
 		wait(NULL);
 	}
-
 }
-*/
+
+//run the execs in a for loop
+void loopExec(int n, char* argvv[][MAX_TOK]){
+	int fd [2];
+	int in = 0;
+	//pass along the pipe reference from 'in' 
+	for(int i = 0; i < n-1 && argvv[i] != NULL; i++) {
+		if(!pipe(fd)){
+			perror("failed to create pipe");
+		}
+		pipeExecute(in, fd[1], argvv[i]);
+		close (fd[1]);
+		in = fd[0];
+	}
+	dup2(in, 0);
+	execvp(argvv[n-1][0], argvv[n-1]);
+	perror("exec failed");
+}
+
+//wrapper function the the pipe exec.
+//IMO it is slightly neater to not have the shell aware of the pipe fds and such
+void loopExecWrapper(char* argvv[][MAX_TOK], int index){
+	int pid = fork();
+	if(pid == -1){
+		perror("failed to fork");
+	}
+	if(pid == 0){
+		loopExec(index, argvv);
+	}
+	else{
+		wait(NULL);
+	}
+}
