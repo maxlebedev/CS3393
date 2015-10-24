@@ -1,4 +1,4 @@
-FLAGS = -std=c99 -Wall -O1
+FLAGS = -std=c99 -D_BSD_SOURCE -Wall -O1
 
 all: du 
 
