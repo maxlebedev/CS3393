@@ -16,6 +16,7 @@
 #define DEF_ARR_LEN 4
 
 int traverseDir(char* dirname, int count);
+void printDir(char* dirname);
 int sizeOfFile(char* dir);
 
 int main (int argc, char* argv[]){
@@ -25,8 +26,13 @@ int main (int argc, char* argv[]){
 	if(!realpath(argv[1], path)){
 		perror("failed to resolve path");
 	}
-	traverseDir(path, 0);
+	printDir(path);
 	return 0;
+}
+
+void printDir(char* dirname){
+	int count = traverseDir(dirname, 0);
+	printf("%d %s\n", count, dirname);
 }
 
 int traverseDir(char* dirname, int count){
@@ -35,7 +41,8 @@ int traverseDir(char* dirname, int count){
 
 	int catlen = 0; 
 	char *tmpcat = NULL;
-	long int cumSize = 0;//we might overflow
+	long int cumSize = 0;
+	long int size = 0;
 	while((direntp = readdir(dirp)) != NULL){
 		if (direntp->d_name[0] != '.') { // Skip files starting with '.'
 			catlen = strlen(dirname) + strlen(direntp->d_name) + 1;//1 extra for '/'
@@ -46,15 +53,13 @@ int traverseDir(char* dirname, int count){
 			}
 			strncat(tmpcat, direntp->d_name, strlen(direntp->d_name));
 			if(direntp->d_type == DT_DIR){ //build the dir string
-				cumSize = traverseDir(tmpcat, count +1);
-				printf("size: %ld : %s\n",cumSize, tmpcat);
-				cumSize = 0;
+				size = traverseDir(tmpcat, count +1);
+				cumSize += size;
+				printf("%ld %s\n",size, tmpcat);
 				strncat(tmpcat, "/", 1);//TODO is this needed?
 			}
 			else{
-				printf("type: %d\n", direntp->d_type);
-				int add = sizeOfFile(tmpcat);
-				cumSize +=  add;
+				cumSize += sizeOfFile(tmpcat);
 			}
 		}
 		else if (direntp->d_name[1] == '\0'){//if we are at .
