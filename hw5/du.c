@@ -3,13 +3,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <limits.h>
 
 #include <inttypes.h>
-
-//TODO handle symlinks
 
 #define DIRSIZE 4
 #define DEF_ARR_LEN 4
@@ -26,6 +21,7 @@ void printDir(char* dirname, arrSet* inodeSet);
 int sizeOfFile(char* dir, arrSet* inodeSet);
 int contains(uintmax_t inode, arrSet* inodeSet);
 void resize(arrSet* inodeSet);
+void buildPath(char* dest, char* path, char* entry);
 
 int main (int argc, char* argv[]){
 	arrSet inodeSet;
@@ -43,53 +39,55 @@ int main (int argc, char* argv[]){
 	return 0;
 }
 
+//traverse the directory structure, and print the sizes off the dirs
 void printDir(char* dirname, arrSet* inodeSet){
 	int count = traverseDir(dirname, 0, inodeSet);
 	printf("%d %s\n", count, dirname);
 }
 
-//int buildPath(char* dest, char* path, char* entry){ }
+//build up the dest string with the new path
+void buildPath(char* dest, char* path, char* entry){
+	strncat(dest, path, strlen(path));
+	//if(dest[strlen(dest)-1] != '/'){//it was at somepoint necessary to add '/'
+	strncat(dest, "/" , 1);// conditionally, but I don't think that is the case anymore
+	strncat(dest, entry, strlen(entry));
+}
 
+//move through each subdir and count their size in blocks
 int traverseDir(char* dirname, int count, arrSet* inodeSet){
 	DIR *dirp = opendir(dirname);
 	struct dirent *direntp;
 
-	int catlen = 0; 
+	int catlen = 0, cumSize = 0,size = 0;
 	char *tmpcat = NULL;
-	long int cumSize = 0;
-	long int size = 0;
 	while((direntp = readdir(dirp)) != NULL){
-		if (direntp->d_name[0] != '.') { // Skip files starting with '.'
+		if (direntp->d_name[0] != '.') { 
 			catlen = strlen(dirname) + strlen(direntp->d_name) + 1;//1 extra for '/'
 			tmpcat = (char*) calloc(catlen,  sizeof(char*));
-			strncat(tmpcat, dirname, strlen(dirname));
-			if(tmpcat[strlen(tmpcat)-1] != '/'){//check if end with /, -1 for 0 offset
-				strncat(tmpcat, "/" , 1);
-			}
-			strncat(tmpcat, direntp->d_name, strlen(direntp->d_name));
-			if(direntp->d_type == DT_DIR){ //build the dir string
+			buildPath(tmpcat, dirname, direntp->d_name);
+			if(direntp->d_type == DT_DIR){
 				size = traverseDir(tmpcat, count +1, inodeSet);
 				cumSize += size;
-				printf("%ld %s\n",size, tmpcat);
-				strncat(tmpcat, "/", 1);//TODO is this needed?
+				printf("%d %s\n",size, tmpcat);
 			}
-			else{
-				//check if hard links exist
+			else{ 
 				cumSize += sizeOfFile(tmpcat, inodeSet);
 			}
 		}
 		else if (direntp->d_name[1] == '\0'){//if we are at .
-			cumSize += DIRSIZE;//TODO du seems to do this
+			cumSize += DIRSIZE;//du seems to do this
 		}
 	}
 	free(tmpcat);
-	closedir(dirp);
+	if(!closedir(dirp)){
+		perror("failed to close a dir");
+	}
 	return cumSize;
 }
 
+//returns 1 if the fiven inode is already counted, 0 otherwise
 int contains(uintmax_t inode, arrSet* inodeSet){
 	for(int i = 0; i < inodeSet->size; i++){
-		printf("testing against %ju of %d\n", inodeSet->array[i], inodeSet->size);
 		if(inode == inodeSet->array[i]){
 			return 1;
 		}
@@ -97,10 +95,12 @@ int contains(uintmax_t inode, arrSet* inodeSet){
 	return 0;
 
 }
-//Takes a directory string an returns its size
+//Takes a directory string an returns its size. The size of files already accounted for is 0
 int sizeOfFile(char* file, arrSet* inodeSet){
 	struct stat statBuf;
-	lstat(file, &statBuf);
+	if(!lstat(file, &statBuf)){
+		perror("lstat failed");
+	}
 	if(statBuf.st_nlink > 1){
 		if(contains((uintmax_t) statBuf.st_ino, inodeSet)){//if we already counted it
 			return 0;
@@ -127,10 +127,3 @@ void resize(arrSet* inodeSet){
 	free(inodeSet->array);
 	inodeSet->array = newArr;
 }
-
-
-
-
-
-
-

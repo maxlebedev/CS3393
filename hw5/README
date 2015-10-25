@@ -1,0 +1,2 @@
+
+The 'du' on my Linux vm gave different sizes than 'stat' did. I sided with stat, but I'm not sure how it will perform on other machines as a result.
