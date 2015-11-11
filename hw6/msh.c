@@ -11,13 +11,14 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <glob.h>
+#include <signal.h>
 
 #define MAX_LEN 100
 #define MAX_TOK 10
 
-//todo globbing
-//signal handling
-//redirection
+//TODO signal handling
+//TODO redirection
+//TODO error checking (glob, signal, redirection)
 
 static int getLine (char *prmpt, char *buff, size_t size);
 void execute(char* argv[]);
@@ -29,9 +30,10 @@ void pipeExecute(int in, int out, char* argv[MAX_TOK]);
 void loopExecWrapper(char* argvv[][MAX_TOK], int index);
 void loopExec(int n, char* argvv[][MAX_TOK]);
 void globExec(char* cmd, char* args[]);
-
+void setupSignals();
 
 int main(int argc, char* argv[]){
+	setupSignals();
 	int done = 0;
 	char* prompt = getenv("PS1");
 	if(!prompt){
@@ -58,6 +60,22 @@ int main(int argc, char* argv[]){
 	}
 	return 0;
 }
+
+void int_handler (int signum) {
+	puts("int'd");
+}
+
+void setupSignals(){
+	//struct sigaction act;
+	struct sigaction new_action, old_action;
+
+	new_action.sa_handler = int_handler;
+	sigemptyset (&new_action.sa_mask);
+	new_action.sa_flags = 0;
+
+	sigaction (SIGINT, &new_action, &old_action);
+}
+
 //Read a line of input of at most MAX_LEN
 int getLine (char *prompt, char *buff, size_t size){
     printf ("%s ", prompt);//fflush (stdout);
