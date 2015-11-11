@@ -10,10 +10,14 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <glob.h>
 
 #define MAX_LEN 100
 #define MAX_TOK 10
 
+//todo globbing
+//signal handling
+//redirection
 
 static int getLine (char *prmpt, char *buff, size_t size);
 void execute(char* argv[]);
@@ -24,6 +28,7 @@ void dup2Wrap(int newfd, int oldfd);
 void pipeExecute(int in, int out, char* argv[MAX_TOK]);
 void loopExecWrapper(char* argvv[][MAX_TOK], int index);
 void loopExec(int n, char* argvv[][MAX_TOK]);
+void globExec(char* cmd, char* args[]);
 
 
 int main(int argc, char* argv[]){
@@ -88,7 +93,7 @@ void execute(char* argv[]){
 		perror("fork failed");
 	}
 	if(pid == 0){
-		execvp(argv[0],argv);
+		globExec(argv[0],argv);
 		perror("exec failed");
 		exit(1);
 	}
@@ -159,6 +164,43 @@ void dup2Wrap(int newfd, int oldfd){
 	}
 }
 
+int globerr(const char *path, int eerrno) {
+	fprintf(stderr, "%s:  %s\n",  path, strerror(eerrno));
+	return 0;	/* let glob() keep going */
+}
+
+//known problems: ~ is not recognized, 
+void globExec(char* cmd, char* args[]){
+	int flags = 0;
+	glob_t results;
+	int ret;
+	//call results with offset of argc. then copy argv into results
+	//oor offset of 1
+	results.gl_offs = 1;
+	for (int i = 0; args[i] != NULL; i++) {
+		flags |= (i > 1 ? GLOB_APPEND|GLOB_DOOFFS : GLOB_DOOFFS);
+		ret = glob(args[i], flags, globerr, &results);
+		if ( ret < 0){
+			execvp(cmd, args);
+		}
+		printf("ret:: %d\n", ret);
+		//todo arr err checking here
+	}
+	results.gl_pathv[0] = cmd;
+	printf("pathc:: %zu\n", results.gl_pathc);
+	execvp(cmd, results.gl_pathv);
+}
+/*
+if (ret != GLOB_NOMATCH){
+args[i] = results.gl_pathv[i];
+}
+for (int i = 0; NULL != args[i] || NULL != results.gl_pathv[i]; i++){
+printf("arg:: %s\n", args[i]);
+printf("globs:: %s\n", results.gl_pathv[i]);
+}
+}
+*/
+
 //execute, but takes an in and out rather than using stdin/stdout
 void pipeExecute(int in, int out, char* argv[MAX_TOK]){
 	int pid = fork();
@@ -171,7 +213,7 @@ void pipeExecute(int in, int out, char* argv[MAX_TOK]){
 			dup2Wrap(out, 1);
 			close(out);
 		}
-		execvp(argv[0], argv);
+		globExec(argv[0], argv);
 		perror("exec failed");
 	}
 }
@@ -190,7 +232,7 @@ void loopExec(int n, char* argvv[][MAX_TOK]){
 		in = fd[0];
 	}
 	dup2(in, 0);
-	execvp(argvv[n-1][0], argvv[n-1]);
+	globExec(argvv[n-1][0], argvv[n-1]);
 	perror("exec failed");
 }
 
@@ -208,3 +250,6 @@ void loopExecWrapper(char* argvv[][MAX_TOK], int index){
 		wait(NULL);
 	}
 }
+
+
+
