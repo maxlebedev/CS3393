@@ -5,6 +5,7 @@
  *
  */
 
+#define _POSIX_SOURCE
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -12,12 +13,17 @@
 #include <sys/wait.h>
 #include <glob.h>
 #include <signal.h>
+#include <sys/types.h>
 
 #define MAX_LEN 100
 #define MAX_TOK 10
 
-//TODO signal handling
+//TODO prompt allignment while signal handling
 //TODO redirection
+	//input
+	//output
+	//appending
+	//any order
 //TODO error checking (glob, signal, redirection)
 
 static int getLine (char *prmpt, char *buff, size_t size);
@@ -42,7 +48,9 @@ int main(int argc, char* argv[]){
 	//read a line, parse it and execute it
 	while(!done){
 		char buff[MAX_LEN];
-		getLine(prompt, buff, MAX_LEN);
+		if(!getLine(prompt, buff, MAX_LEN)){
+			continue;//if input was empty try again
+		}
 		int pipes = countPipes(buff);
 		char* argvv[pipes+1][MAX_TOK];
 
@@ -61,49 +69,63 @@ int main(int argc, char* argv[]){
 	return 0;
 }
 
-void int_handler (int signum) {
-	puts("int'd");
+void handle_signal(int signal) {
+	switch (signal) {
+		case SIGINT:
+			printf("\n");
+			break;
+		case SIGQUIT:
+			break;
+		default:
+			fprintf(stderr, "Caught wrong signal: %d\n", signal);
+			return;
+	}
 }
 
 void setupSignals(){
-	//struct sigaction act;
-	struct sigaction new_action, old_action;
+	struct sigaction new_action;
+	struct sigaction old_action;
 
-	new_action.sa_handler = int_handler;
+	new_action.sa_handler = &handle_signal;
 	sigemptyset (&new_action.sa_mask);
 	new_action.sa_flags = 0;
 
-	sigaction (SIGINT, &new_action, &old_action);
+	if(sigaction(SIGINT, &new_action, &old_action)){
+		perror("Error: cannot handle SIGINT");
+	}
+	if(sigaction(SIGQUIT, &new_action, &old_action)){
+		perror("Error: cannot handle SIGQUIT");
+	}
+//TODO restore old thing or clean up?
 }
 
-//Read a line of input of at most MAX_LEN
+//Read a line of input of at most MAX_LEN. Return number of chars read
 int getLine (char *prompt, char *buff, size_t size){
-    printf ("%s ", prompt);//fflush (stdout);
-    //check for null in case stdin was closed or something
-    if (fgets (buff, size, stdin) == NULL){
-	    printf ("\nNo input\n");
-	    exit(1);
-    }
-    // If it was too long, there'll be no newline. In that case, we flush
-    // to end of line so that excess doesn't affect the next call.
-    if (buff[strlen(buff)-1] != '\n'){
-	int ch, extra;
-        extra = 0;
-        while (((ch = getchar()) != '\n') && (ch != EOF))
-            extra = 1;
-	if(extra){
-		printf ("Input too long\n");
-		exit(1);
+	printf ("%s ", prompt);//fflush (stdout);
+	//check for null in case stdin was closed or something
+	//If the input is Null, return 
+	if (fgets (buff, size, stdin) == NULL){
+		return 0;
 	}
-	else{
-	       	return 0;
+	// If it was too long, there'll be no newline. In that case, we flush
+	// to end of line so that excess doesn't affect the next call.
+	if (buff[strlen(buff)-1] != '\n'){
+		int ch, extra;
+		extra = 0;
+		while (((ch = getchar()) != '\n') && (ch != EOF))
+			extra = 1;
+		if(extra){
+			printf ("Input too long\n");
+			exit(1);
+		}
+		else{
+			return 0;
+		}
 	}
-    }
-    // Otherwise remove newline, return
-    buff[strlen(buff)-1] = '\0';
-    return 0;
+	// Otherwise remove newline, return
+	buff[strlen(buff)-1] = '\0';
+	return strlen(buff);
 }
-
 //spawn a child to run the inputted command with exec
 void execute(char* argv[]){
 	int pid = fork();
@@ -126,10 +148,14 @@ int builtin(char* argv[]){
 		exit(0);
 	if(!strcmp(argv[0], "cd")){
 		if(NULL == argv[1]){
-			chdir(getenv("HOME"));
+			if(chdir(getenv("HOME"))){
+				perror("chdir dailed");
+			}
 		}
 		else {
-			chdir(argv[1]);
+			if(chdir(argv[1])){
+				perror("chdir dailed");
+			}
 		}
 	}
 	//not a builtin, exec
@@ -201,11 +227,9 @@ void globExec(char* cmd, char* args[]){
 		if ( ret < 0){
 			execvp(cmd, args);
 		}
-		printf("ret:: %d\n", ret);
 		//todo arr err checking here
 	}
 	results.gl_pathv[0] = cmd;
-	printf("pathc:: %zu\n", results.gl_pathc);
 	execvp(cmd, results.gl_pathv);
 }
 /*
