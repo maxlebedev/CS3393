@@ -14,17 +14,10 @@
 #include <glob.h>
 #include <signal.h>
 #include <sys/types.h>
+#include <fcntl.h>
 
 #define MAX_LEN 100
 #define MAX_TOK 10
-
-//TODO prompt allignment while signal handling
-//TODO redirection
-	//input
-	//output
-	//appending
-	//any order
-//TODO error checking (glob, signal, redirection)
 
 static int getLine (char *prmpt, char *buff, size_t size);
 void execute(char* argv[]);
@@ -35,8 +28,11 @@ void dup2Wrap(int newfd, int oldfd);
 void pipeExecute(int in, int out, char* argv[MAX_TOK]);
 void loopExecWrapper(char* argvv[][MAX_TOK], int index);
 void loopExec(int n, char* argvv[][MAX_TOK]);
+int globerr(const char *path, int eerrno);
 void globExec(char* cmd, char* args[]);
 void setupSignals();
+void setupRedirects(char* argv[]);
+int openWrapper(char* file,int flags,mode_t mode);
 
 int main(int argc, char* argv[]){
 	setupSignals();
@@ -69,6 +65,7 @@ int main(int argc, char* argv[]){
 	return 0;
 }
 
+// signal handler. it handles signals
 void handle_signal(int signal) {
 	switch (signal) {
 		case SIGINT:
@@ -76,12 +73,10 @@ void handle_signal(int signal) {
 			break;
 		case SIGQUIT:
 			break;
-		default:
-			fprintf(stderr, "Caught wrong signal: %d\n", signal);
-			return;
 	}
 }
 
+//basically ignore SIGINT and SIGQUIT
 void setupSignals(){
 	struct sigaction new_action;
 	struct sigaction old_action;
@@ -90,13 +85,13 @@ void setupSignals(){
 	sigemptyset (&new_action.sa_mask);
 	new_action.sa_flags = 0;
 
+	//the hw only mentioned these two signals, so these are the only two dealt with
 	if(sigaction(SIGINT, &new_action, &old_action)){
 		perror("Error: cannot handle SIGINT");
 	}
 	if(sigaction(SIGQUIT, &new_action, &old_action)){
 		perror("Error: cannot handle SIGQUIT");
 	}
-//TODO restore old thing or clean up?
 }
 
 //Read a line of input of at most MAX_LEN. Return number of chars read
@@ -126,6 +121,7 @@ int getLine (char *prompt, char *buff, size_t size){
 	buff[strlen(buff)-1] = '\0';
 	return strlen(buff);
 }
+
 //spawn a child to run the inputted command with exec
 void execute(char* argv[]){
 	int pid = fork();
@@ -133,6 +129,7 @@ void execute(char* argv[]){
 		perror("fork failed");
 	}
 	if(pid == 0){
+		setupRedirects(argv);
 		globExec(argv[0],argv);
 		perror("exec failed");
 		exit(1);
@@ -208,40 +205,98 @@ void dup2Wrap(int newfd, int oldfd){
 	}
 }
 
+//remove n strings from the string array arr starting at location start
+void removeFromArray(int start, int n,char* arr[]){
+	//if the two we are removing are at the end
+	if (arr[start+n+1] == NULL){
+		arr[start+1] = NULL;
+	}	
+	else{
+		int i = start;
+		while(arr[i+n] != NULL){
+			arr[i] = arr[i+n];
+			i++;
+		}
+		arr[i] = NULL;
+
+	}
+}
+
+//a wrapper for open that also does error checking
+int openWrapper(char* file,int flags,mode_t mode){
+	int fd;
+	if(mode){
+		fd = open(file, O_RDONLY, mode);
+	}
+	else{
+		fd = open(file, O_RDONLY);
+	}
+	if(fd < 0){
+		perror("failed to open");
+	}
+	return fd;
+}
+
+//loop through argv, if >, >>, or < handle appropriaty
+void setupRedirects(char* argv[]){
+	int fd;
+	for(int i = 0; argv[i] != NULL; i++){
+		if(argv[i][0] == '<'){ //handle open, 0
+			fd = open(argv[i+1], O_RDONLY, 0);
+			if(fd < 0){
+				perror("failed to open");
+			}
+			dup2Wrap(fd,0);
+			removeFromArray(i, 2, argv);
+			i--;//reread
+		}
+		else if(argv[i][0] == '>'){
+			if (argv[i][1] == '>'){
+				fd = open(argv[i+1], O_CREAT | O_WRONLY | O_APPEND, 666);
+				if(fd < 0){
+					perror("failed to open");
+				}
+			}
+			else{
+				fd = open(argv[i+1], O_CREAT | O_WRONLY | O_TRUNC, 666);
+				if(fd < 0){
+					perror("failed to open");
+				}
+			}
+			dup2Wrap(fd,1);
+			removeFromArray(i, 2, argv);
+			i--;//reread
+		}
+	}
+}
+
+//errorprint function to provide to glob
 int globerr(const char *path, int eerrno) {
 	fprintf(stderr, "%s:  %s\n",  path, strerror(eerrno));
 	return 0;	/* let glob() keep going */
 }
 
-//known problems: ~ is not recognized, 
+//exec wrapper globs the input before passing it to exec
 void globExec(char* cmd, char* args[]){
 	int flags = 0;
 	glob_t results;
 	int ret;
-	//call results with offset of argc. then copy argv into results
-	//oor offset of 1
-	results.gl_offs = 1;
+	char* globbedArgs[MAX_LEN];
+	int glInd = 0;
 	for (int i = 0; args[i] != NULL; i++) {
-		flags |= (i > 1 ? GLOB_APPEND|GLOB_DOOFFS : GLOB_DOOFFS);
 		ret = glob(args[i], flags, globerr, &results);
-		if ( ret < 0){
-			execvp(cmd, args);
+		if(!ret){
+			for(int j = 0; j < results.gl_pathc; j++){
+				globbedArgs[glInd++] = results.gl_pathv[j];
+			}
 		}
-		//todo arr err checking here
+		if (ret == GLOB_NOMATCH){
+			globbedArgs[glInd++] = args[i];
+		}
 	}
-	results.gl_pathv[0] = cmd;
-	execvp(cmd, results.gl_pathv);
+	globbedArgs[glInd] = NULL;
+	execvp(cmd, globbedArgs);
 }
-/*
-if (ret != GLOB_NOMATCH){
-args[i] = results.gl_pathv[i];
-}
-for (int i = 0; NULL != args[i] || NULL != results.gl_pathv[i]; i++){
-printf("arg:: %s\n", args[i]);
-printf("globs:: %s\n", results.gl_pathv[i]);
-}
-}
-*/
 
 //execute, but takes an in and out rather than using stdin/stdout
 void pipeExecute(int in, int out, char* argv[MAX_TOK]){
@@ -255,6 +310,7 @@ void pipeExecute(int in, int out, char* argv[MAX_TOK]){
 			dup2Wrap(out, 1);
 			close(out);
 		}
+		setupRedirects(argv);
 		globExec(argv[0], argv);
 		perror("exec failed");
 	}
@@ -273,7 +329,8 @@ void loopExec(int n, char* argvv[][MAX_TOK]){
 		close (fd[1]);
 		in = fd[0];
 	}
-	dup2(in, 0);
+	dup2Wrap(in, 0);
+	setupRedirects(argvv[n-1]);
 	globExec(argvv[n-1][0], argvv[n-1]);
 	perror("exec failed");
 }
@@ -292,6 +349,3 @@ void loopExecWrapper(char* argvv[][MAX_TOK], int index){
 		wait(NULL);
 	}
 }
-
-
-
