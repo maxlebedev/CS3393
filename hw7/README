@@ -1,0 +1,9 @@
+
+Usage Example: 
+./chat.c -s -u server -p 3001
+./chat.c -s -u client -p 3001 -i localhost
+
+
+Messages of over 253 characters may be formatted porrly
+The chat can be terminated by either user by typing 'exit' or by entering any message that ends with ':exit'. This final message will be delivered
+

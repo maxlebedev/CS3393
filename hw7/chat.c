@@ -55,7 +55,7 @@ int parse_args(char* argv[], char** username, long* port, char* client, char** i
 	return 0;
 }
 
-//wrapper for socket with erro checking
+//wrapper for socket with error checking
 int err_socket(){
 	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 	if (sockfd < 0){
@@ -78,11 +78,11 @@ void err_read(int sockfd, char* buffer){
 	}
 }
 
+//this is the reading thread. it displays recieved messages to the user
 void *read_thread(void *params){
 	struct thread_param *p = params;
 	char buffer[BUF_LEN+1];
 	memset(buffer, 0, sizeof(buffer));
-	//while(strncmp (buffer,"exit",4) !=0){
 	while(strstr(buffer, ":exit\n") == NULL){
 		memset(buffer, 0, sizeof(buffer));
 		err_read((int)p->sockfd,buffer);
@@ -92,8 +92,8 @@ void *read_thread(void *params){
 	exit(0);
 }
 
-//TODO fix exits
-void prepend(char* s, const char* t) {
+//this function prepends t followed by a colon onto string s
+void prepend(char* s, const char* t){
     size_t len = strlen(t);
     size_t i;
 
@@ -102,50 +102,50 @@ void prepend(char* s, const char* t) {
         s[i] = t[i];
     }
 	s[len] = ':';
-	s[BUF_LEN] = '\0';
 }
 
+//this is the writing thread. it sends messages to the other user
 void *write_thread(void *params){
 	struct thread_param *p = params;
 	char buffer[BUF_LEN+1];
 	memset(buffer, 0, sizeof(buffer));
-	//while(strncmp (buffer,"exit",4) !=0){
 	while(strstr(buffer, ":exit\n") == NULL){
-		fgets(buffer,BUF_LEN,stdin);
+		if (fgets(buffer,BUF_LEN,stdin) == NULL){
+			perror("fgets failed");
+			exit(1);
+		}
 		prepend(buffer,p->username);
 		err_write(p->sockfd,buffer);//write usname too
 	}
 	exit(0);
-	//pthread_exit(NULL);
 }
 
 //create a read thread to get messages, create a write thread to send messages
 void thread_chat(char* username, int sockfd){
 	pthread_t threads[NUM_THREADS];
-
 	struct thread_param param;
 	param.username = username;
 	param.sockfd = sockfd;
 
 	int rc;
-	rc = pthread_create(&threads[1], NULL, write_thread, &param);
+	rc = pthread_create(&threads[0], NULL, write_thread, &param);
 	if(rc){
 		perror("failed to create write thread");
 	}
-	rc = pthread_create(&threads[0], NULL, read_thread, &param);
+	rc = pthread_create(&threads[1], NULL, read_thread, &param);
 	if(rc){
 		perror("failed to create read thread");
 	}
 	pthread_exit(NULL);
 }
 
-//do client things
+//set up a connection with the server
 int setup_client(char* username, long port,char* ip){
 	int sockfd;
 	struct sockaddr_in serv_addr;
 	struct hostent *server;
 	sockfd = err_socket();
-	server = gethostbyname("localhost");
+	server = gethostbyname(ip);
 	if (server == NULL) {
 		fprintf(stderr,"error, no such host\n");
 		exit(1);
@@ -161,7 +161,7 @@ int setup_client(char* username, long port,char* ip){
 	return 0;
 }
 
-//do server things
+//set up a connection with the client
 int setup_server(char* username, long port){
 	int sockfd;
 	struct sockaddr_in serv_addr, cli_addr;
