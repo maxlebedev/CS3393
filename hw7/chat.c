@@ -10,9 +10,15 @@
 #include <pthread.h>
 
 #define NUM_THREADS 2
+#define BUF_LEN 255
+#define PORTNO 3000
 
+struct thread_param{
+	char* username;
+	int sockfd;
+};
 //interpret cmd line args
-int parse_args(char* argv[], char** username, long* port, char* client){
+int parse_args(char* argv[], char** username, long* port, char* client, char** ip){
 	char * pEnd;
 	for(int i = 1; argv[i] != NULL; i++){
 		if(argv[i][0] != '-'){
@@ -35,6 +41,9 @@ int parse_args(char* argv[], char** username, long* port, char* client){
 					break;
 				case 'u': //username
 					*username = argv[i+1];
+					break;
+				case 'i': //ip
+					*ip = argv[i+1];
 					break;
 				case 'h': //help, same as default
 				default: 
@@ -64,54 +73,74 @@ void err_write(int sockfd, char* buffer){
 
 //wrapper for read with error checking
 void err_read(int sockfd, char* buffer){
-	if (read(sockfd,buffer,255) < 0){
+	if (read(sockfd,buffer,BUF_LEN) < 0){
 		perror("error reading from socket");
 	}
 }
 
-void *read_thread(void *client_sockfd){
-	char buffer[256];
+void *read_thread(void *params){
+	struct thread_param *p = params;
+	char buffer[BUF_LEN+1];
 	memset(buffer, 0, sizeof(buffer));
-	if (strncmp (buffer,"exit",4) ==0){
-		pthread_exit(NULL);
-		//TODO kill other thread too
+	//while(strncmp (buffer,"exit",4) !=0){
+	while(strstr(buffer, ":exit\n") == NULL){
+		memset(buffer, 0, sizeof(buffer));
+		err_read((int)p->sockfd,buffer);
+		//puts(buffer);
+		printf("%s", buffer);
 	}
-	while(strncmp (buffer,"exit",4) !=0){
-		err_read((int)client_sockfd,buffer);
-		//printf("%s\n",buffer);
-		puts(buffer);
-	}
-	pthread_exit(NULL);
+	exit(0);
 }
 
-void *write_thread(void *client_sockfd){
-	char buffer[256];
+//TODO fix exits
+void prepend(char* s, const char* t) {
+    size_t len = strlen(t);
+    size_t i;
+
+    memmove(s + len+1, s, strlen(s) + 1);
+    for (i = 0; i < len; ++i) {
+        s[i] = t[i];
+    }
+	s[len] = ':';
+	s[BUF_LEN] = '\0';
+}
+
+void *write_thread(void *params){
+	struct thread_param *p = params;
+	char buffer[BUF_LEN+1];
 	memset(buffer, 0, sizeof(buffer));
-	while(strncmp (buffer,"exit",4) !=0){
-		fgets(buffer,255,stdin);
-		err_write((int)client_sockfd,buffer);
+	//while(strncmp (buffer,"exit",4) !=0){
+	while(strstr(buffer, ":exit\n") == NULL){
+		fgets(buffer,BUF_LEN,stdin);
+		prepend(buffer,p->username);
+		err_write(p->sockfd,buffer);//write usname too
 	}
-	pthread_exit(NULL);
+	exit(0);
+	//pthread_exit(NULL);
 }
 
 //create a read thread to get messages, create a write thread to send messages
-void thread_chat(int client_sockfd){
+void thread_chat(char* username, int sockfd){
 	pthread_t threads[NUM_THREADS];
-	long t = 0;
+
+	struct thread_param param;
+	param.username = username;
+	param.sockfd = sockfd;
+
 	int rc;
-	rc = pthread_create(&threads[t++], NULL, read_thread, (void *)client_sockfd);
-	if(rc){
-		perror("failed to create read thread");
-	}
-	rc = pthread_create(&threads[t], NULL, write_thread, (void *)client_sockfd);
+	rc = pthread_create(&threads[1], NULL, write_thread, &param);
 	if(rc){
 		perror("failed to create write thread");
+	}
+	rc = pthread_create(&threads[0], NULL, read_thread, &param);
+	if(rc){
+		perror("failed to create read thread");
 	}
 	pthread_exit(NULL);
 }
 
 //do client things
-int setup_client(char* username, long port){
+int setup_client(char* username, long port,char* ip){
 	int sockfd;
 	struct sockaddr_in serv_addr;
 	struct hostent *server;
@@ -127,7 +156,7 @@ int setup_client(char* username, long port){
 	if (connect(sockfd,(struct sockaddr *) &serv_addr,sizeof(serv_addr)) < 0) {
 		perror("error connecting");
 	}
-	thread_chat(sockfd);
+	thread_chat(username, sockfd);
 	close(sockfd);
 	return 0;
 }
@@ -152,7 +181,7 @@ int setup_server(char* username, long port){
 	if (client_sockfd < 0){
 		perror("error on accept");
 	}
-	thread_chat(client_sockfd);
+	thread_chat(username, client_sockfd);
 	err_write(client_sockfd,"exit");
 	close(client_sockfd);
 	close(sockfd);
@@ -161,13 +190,14 @@ int setup_server(char* username, long port){
 
 int main(int argc, char* argv[]){
 	char* username;
-	long port = 3000;//Default value
+	long port = PORTNO;//Default port
 	char client;
+	char* ip;
 
-	parse_args(argv, &username, &port, &client);
+	parse_args(argv, &username, &port, &client, &ip);
 
 	if (client){
-		setup_client(username, port);
+		setup_client(username, port, ip);
 	}
 	else{
 		setup_server(username, port);
